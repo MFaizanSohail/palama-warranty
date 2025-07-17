@@ -71,6 +71,17 @@
 
     // Client-side form validation
     $form.on("submit", function (e) {
+      e.preventDefault(); 
+      grecaptcha.ready(function () {
+        grecaptcha
+          .execute("<?= esc_js($site_key); ?>", { action: "warranty_form" })
+          .then(function (token) {
+            $("#g-recaptcha-response").val(token); // set token in hidden field
+            $form.off("submit"); // remove handler to avoid recursion
+            $form.submit(); // resubmit now with captcha token
+          });
+      });
+
       let isValid = true;
       const requiredFields = [
         "first_name",
@@ -146,5 +157,18 @@
         }, 5000);
       }
     });
+
+    // reCAPTCHA v3 execution
+    if (typeof grecaptcha !== "undefined") {
+      grecaptcha.ready(function () {
+        grecaptcha
+          .execute("<?php echo esc_js($site_key); ?>", {
+            action: "warranty_form",
+          })
+          .then(function (token) {
+            $("#g-recaptcha-response").val(token);
+          });
+      });
+    }
   });
 })(jQuery);

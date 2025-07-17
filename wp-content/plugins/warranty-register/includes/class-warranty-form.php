@@ -23,8 +23,7 @@ class Warranty_Form
     wp_enqueue_style('jquery-ui-theme', 'https://code.jquery.com/ui/1.13.2/themes/smoothness/jquery-ui.css');
     wp_enqueue_style('font-awesome', 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
 
-    $options = get_option('wr_settings', []);
-    $site_key = $options['recaptcha_site_key'] ?? '';
+    $site_key = '6Le2rIYrAAAAACJogAO2LVD7PyUx2Q7yde_kd_jt'; // Google test key
 
     if ($site_key) {
       wp_enqueue_script('recaptcha-v3', 'https://www.google.com/recaptcha/api.js?render=' . $site_key, [], null, true);
@@ -46,8 +45,7 @@ class Warranty_Form
     if (! class_exists('WooCommerce')) {
       echo '<div class="wr-error">WooCommerce is not active. Country list unavailable.</div>';
       return;
-    }
-?>
+    } ?>
 
     <div class="wr-container" style="
       background-color: <?php echo esc_attr($colors['background_color'] ?? '#ffffff'); ?>;
@@ -57,7 +55,7 @@ class Warranty_Form
       --wr-btn-text: <?php echo esc_attr($colors['submit_btn_text'] ?? '#ffffff'); ?>;
     ">
       <h2 class="wr-form-title"><?php echo esc_html($field_labels['form_title'] ?? 'Register Your Warranty'); ?></h2>
-      <form id="wr-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
+      <form id="warrantyForm" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
         <input type="hidden" name="action" value="pwr_submit_form" />
         <?php wp_nonce_field('pwr_form_nonce', 'pwr_nonce'); ?>
 
@@ -134,43 +132,30 @@ class Warranty_Form
           <?php endforeach; ?>
         <?php endif; ?>
 
-        <!-- recaptcha -->
-        <?php if (!empty($site_key)) : ?>
-          <div id="recaptcha-container"></div>
-          <input type="hidden" name="g-recaptcha-response" id="g-recaptcha-response">
-
-          <script>
-            function loadRecaptchaV3() {
-              grecaptcha.ready(function() {
-                grecaptcha.execute('<?php echo esc_js($site_key); ?>', {
-                    action: 'warranty_form'
-                  })
-                  .then(function(token) {
-                    document.getElementById('g-recaptcha-response').value = token;
-                  });
-              });
-            }
-
-            // Run on page load
-            loadRecaptchaV3();
-
-            // Optionally run again right before form submit to refresh token
-            document.getElementById('wr-form').addEventListener('submit', function(e) {
-              const tokenInput = document.getElementById('g-recaptcha-response');
-              if (!tokenInput.value) {
-                e.preventDefault();
-                loadRecaptchaV3();
-                setTimeout(function() {
-                  document.getElementById('wr-form').submit();
-                }, 1000); // Allow time for token to populate
-              }
-            });
-          </script>
-        <?php endif; ?>
-
         <button type="submit" class="wr-submit-btn">
           <?php echo esc_html($field_labels['submit'] ?? 'Register'); ?>
         </button>
+
+
+        <?php
+        $options = get_option('wr_settings');
+        $site_key = esc_attr($options['recaptcha_site_key'] ?? '');
+        ?>
+        <script src="https://www.google.com/recaptcha/api.js?render=$site_key"></script>
+
+        <script>
+          grecaptcha.ready(function() {
+            grecaptcha.execute('$site_key', {
+              action: 'submit'
+            }).then(function(token) {
+              var input = document.createElement("input");
+              input.type = "hidden";
+              input.name = "recaptcha_token";
+              input.value = token;
+              document.getElementById("warrantyForm").appendChild(input);
+            });
+          });
+        </script>
       </form>
 
       <div class="wr-popup hidden" id="wr-popup">
@@ -265,33 +250,11 @@ class Warranty_Form
         }
       }
     }
-
-
-    $recaptcha_secret = $options['recaptcha_secret_key'] ?? '';
-    $recaptcha_response = $_POST['g-recaptcha-response'] ?? '';
-
-    $recaptcha_verified = false;
-
-    if (!empty($recaptcha_response)) {
-      $verify_response = wp_remote_post('https://www.google.com/recaptcha/api/siteverify', [
-        'body' => [
-          'secret' => $recaptcha_secret,
-          'response' => $recaptcha_response,
-          'remoteip' => $_SERVER['REMOTE_ADDR'],
-        ],
-      ]);
-
-      $response_body = wp_remote_retrieve_body($verify_response);
-      $result = json_decode($response_body, true);
-
-      if (!empty($result['success']) && $result['success'] === true) {
-        $recaptcha_verified = true;
-      }
-    }
-
-    if (!$recaptcha_verified) {
+    $recaptcha_token = sanitize_text_field($_POST['recaptcha_token'] ?? '');
+    if (empty($recaptcha_token) || !$this->verify_recaptcha_v3($recaptcha_token)) {
       $errors[] = 'reCAPTCHA verification failed. Please try again.';
     }
+
 
 
     if (! empty($errors)) {
@@ -365,6 +328,36 @@ class Warranty_Form
       'pwr_message' => urlencode($success_message)
     ], wp_get_referer()));
     exit;
+  }
+
+  private function verify_recaptcha_v3($token)
+  {
+    $settings = get_option('wr_settings');
+    $secret_key = $settings['recaptcha_secret_key'] ?? '';
+    $url = 'https://www.google.com/recaptcha/api/siteverify';
+
+    $response = wp_remote_post($url, [
+      'body' => [
+        'secret' => $secret_key,
+        'response' => $token,
+        'remoteip' => $_SERVER['REMOTE_ADDR'],
+      ]
+    ]);
+
+    if (is_wp_error($response)) {
+      error_log('reCAPTCHA HTTP error: ' . $response->get_error_message());
+      return false;
+    }
+
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+
+    if (!isset($data['success']) || !$data['success']) {
+      error_log('reCAPTCHA API response error: ' . print_r($data, true));
+      return false;
+    }
+
+    // Optional: adjust score/action as needed
+    return ($data['score'] ?? 0) >= 0.5 && ($data['action'] ?? '') === 'submit';
   }
 }
 
