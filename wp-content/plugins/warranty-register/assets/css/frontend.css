@@ -282,3 +282,10 @@ a.ui-datepicker-prev.ui-corner-all{
   color: var(--wr-btn-text);
 }
 
+.grecaptcha-badge {
+  z-index: 9999 !important;
+  bottom: 80px !important;
+  right: 10px !important;
+  transform: scale(0.8);
+  opacity: 0;
+}

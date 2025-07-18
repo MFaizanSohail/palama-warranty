@@ -1,11 +1,13 @@
 <?php
+
+use WpOrg\Requests\Response;
+
 if (! defined('ABSPATH')) {
   exit;
 }
 
 class Warranty_Form
 {
-
   public function __construct()
   {
     add_shortcode('warranty_form', [$this, 'render_form']);
@@ -16,18 +18,10 @@ class Warranty_Form
 
   public function enqueue_frontend_assets()
   {
-
     wp_enqueue_style('wr-frontend-css', WR_PLUGIN_URL . 'assets/css/frontend.css', [], '1.0');
-    // Enqueue jQuery UI datepicker.
     wp_enqueue_script('wr-frontend-js', WR_PLUGIN_URL . 'assets/js/frontend.js', ['jquery', 'jquery-ui-datepicker'], '1.0', true);
     wp_enqueue_style('jquery-ui-theme', 'https://code.jquery.com/ui/1.13.2/themes/smoothness/jquery-ui.css');
     wp_enqueue_style('font-awesome', 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
-
-    $site_key = '6Le2rIYrAAAAACJogAO2LVD7PyUx2Q7yde_kd_jt'; // Google test key
-
-    if ($site_key) {
-      wp_enqueue_script('recaptcha-v3', 'https://www.google.com/recaptcha/api.js?render=' . $site_key, [], null, true);
-    }
   }
 
   public function render_form()
@@ -45,7 +39,18 @@ class Warranty_Form
     if (! class_exists('WooCommerce')) {
       echo '<div class="wr-error">WooCommerce is not active. Country list unavailable.</div>';
       return;
-    } ?>
+    }
+
+    $options = get_option('wr_settings');
+    $site_key = esc_attr($options['recaptcha_site_key']);
+    ?>
+
+    <script src="https://www.google.com/recaptcha/api.js?render=<?php echo esc_js($site_key); ?>"></script>
+    <script>
+      function onSubmit(token) {
+        document.getElementById("demo-form").submit();
+      }
+    </script>
 
     <div class="wr-container" style="
       background-color: <?php echo esc_attr($colors['background_color'] ?? '#ffffff'); ?>;
@@ -90,7 +95,7 @@ class Warranty_Form
           <div class="wr-form-group">
             <label class="wr-label"><?php echo esc_html($field_labels['purchase_date'] ?? 'Purchase Date'); ?></label>
             <div class="datepicker-icon-group">
-              <input type="text" name="purchase_date" id="wr_purchase_date" placeholder="<?php echo esc_attr($field_labels['purchase_date'] ?? 'YYYY-MM-DD'); ?>" />
+              <input type="text" name="purchase_date" id="wr_purchase_date" placeholder="YYYY-MM-DD" />
               <span class="calendar-icon"></span>
             </div>
           </div>
@@ -122,41 +127,20 @@ class Warranty_Form
         <div class="wr-checkbox-group">
           <label><input type="checkbox" name="consent" /> <?php echo esc_html($field_labels['consent'] ?? 'I agree to the terms and conditions'); ?></label>
         </div>
-
-        <?php if (!empty($options['custom_fields'])) : ?>
-          <?php foreach ($options['custom_fields'] as $field) : ?>
-            <div class="wr-form-group">
-              <label class="wr-label"><?php echo esc_html($field['label']); ?></label>
-              <input type="text" name="<?php echo esc_attr($field['name']); ?>" />
-            </div>
-          <?php endforeach; ?>
-        <?php endif; ?>
-
-        <button type="submit" class="wr-submit-btn">
+        
+        <input type="hidden" id="g-recaptcha-response" name="g-recaptcha-response">
+        <button class="wr-submit-btn" type="submit">
           <?php echo esc_html($field_labels['submit'] ?? 'Register'); ?>
         </button>
-
-
-        <?php
-        $options = get_option('wr_settings');
-        $site_key = esc_attr($options['recaptcha_site_key'] ?? '');
-        ?>
-        <script src="https://www.google.com/recaptcha/api.js?render=$site_key"></script>
-
-        <script>
-          grecaptcha.ready(function() {
-            grecaptcha.execute('$site_key', {
-              action: 'submit'
-            }).then(function(token) {
-              var input = document.createElement("input");
-              input.type = "hidden";
-              input.name = "recaptcha_token";
-              input.value = token;
-              document.getElementById("warrantyForm").appendChild(input);
-            });
-          });
-        </script>
       </form>
+      <script>
+        grecaptcha.ready(function(){
+          grecaptcha.execute($site_key,{action: "submit"})
+          .then(function(token){
+            console.log(token);
+          });
+        });
+      </script>
 
       <div class="wr-popup hidden" id="wr-popup">
         <div class="wr-popup-content">
@@ -165,13 +149,18 @@ class Warranty_Form
         </div>
       </div>
     </div>
-<?php
+    <?php
     return ob_get_clean();
   }
 
-
   public function process_form()
   {
+
+    $options = get_option('wr_settings');
+    $site_key = esc_attr($options['recaptcha_site_key']);
+    $secret_key = esc_attr($options['recaptcha_secret_key']); 
+
+
     if (! isset($_POST['pwr_nonce']) || ! wp_verify_nonce($_POST['pwr_nonce'], 'pwr_form_nonce')) {
       wp_die('Security check failed', 'Error', ['response' => 403]);
     }
@@ -180,11 +169,18 @@ class Warranty_Form
     $table_name = $wpdb->prefix . 'warranty_cards';
     $options = get_option('wr_settings', []);
     $max_warranty_limit = isset($options['warranty_max']) ? (int)$options['warranty_max'] : 1000;
-    $success_message = isset($options['success_message']) ? sanitize_text_field($options['success_message']) : 'Thank you for registering.';
-    $error_message = isset($options['error_message']) ? sanitize_text_field($options['error_message']) : 'There was a problem submitting the form.';
+    $success_message = sanitize_text_field($options['success_message'] ?? 'Thank you for registering.');
+    $error_message = sanitize_text_field($options['error_message'] ?? 'There was a problem submitting the form.');
 
+    $response = wp_remote_post('https://www.google.com/recaptcha/api/siteverify', [
+      'body' => [
+        'secret'   => $secret_key,
+        'response' => sanitize_text_field($_POST['g-recaptcha-response'] ?? ''),
+      ],
+    ]);
 
-    // Validate fields (simplified example)
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+
     $required = [
       'first_name'       => 'First Name',
       'last_name'        => 'Last Name',
@@ -196,7 +192,7 @@ class Warranty_Form
     ];
 
     $errors = [];
-    $data   = [];
+    $data = [];
 
     foreach ($required as $field => $name) {
       if (empty($_POST[$field])) {
@@ -209,19 +205,15 @@ class Warranty_Form
       $errors[] = 'Please enter a valid email address';
     }
 
-    $data['product_model'] = sanitize_text_field($_POST['product_model'] ?? '');
-
     if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $data['purchase_date'])) {
       $errors[] = 'Invalid purchase date format';
     }
 
-    // Validate file upload (example)
     $file = $_FILES['invoice_file'] ?? null;
     if (! $file || $file['error'] !== UPLOAD_ERR_OK) {
       $errors[] = 'Warranty file is required';
     }
 
-    // Check consent
     if (empty($_POST['consent'])) {
       $errors[] = 'You must agree to the privacy policy';
     }
@@ -231,46 +223,36 @@ class Warranty_Form
       $errors[] = 'Invalid country selected.';
     }
 
-    // Warranty number range check
-    $warranty_number = $_POST['warranty_number'] ?? '';
-    if (!preg_match('/^\d{4}$/', $warranty_number)) {
-      $errors[] = 'Warranty number must be 4 digits (e.g., 0001)';
+    // Warranty number
+    $warranty_number = (int) ($_POST['warranty_number'] ?? 0);
+    $formatted_number = str_pad($warranty_number, 4, '0', STR_PAD_LEFT);
+
+    if ($warranty_number < 1 || $warranty_number > $max_warranty_limit) {
+      $errors[] = "Warranty number must be between 0001 and " . str_pad($max_warranty_limit, 4, "0", STR_PAD_LEFT) . '.';
     } else {
-      $number = (int) $warranty_number;
-      if ($number < 1 || $number > $max_warranty_limit) {
-        $errors[] = "Warranty number must be between 0001 and " . str_pad($max_warranty_limit, 4, "0", STR_PAD_LEFT) . '.';
-      } else {
-        $data['warranty_number'] = $warranty_number; // retain 0001 format
-        $existing = $wpdb->get_var($wpdb->prepare(
-          "SELECT COUNT(*) FROM $table_name WHERE warranty_number = %s",
-          $warranty_number
-        ));
-        if ($existing > 0) {
-          $errors[] = 'Warranty number already registered.';
-        }
+      $data['warranty_number'] = $formatted_number;
+      $existing = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM $table_name WHERE warranty_number = %s",
+        $formatted_number
+      ));
+      if ($existing > 0) {
+        $errors[] = 'Warranty number already registered.';
       }
     }
-    $recaptcha_token = sanitize_text_field($_POST['recaptcha_token'] ?? '');
-    if (empty($recaptcha_token) || !$this->verify_recaptcha_v3($recaptcha_token)) {
-      $errors[] = 'reCAPTCHA verification failed. Please try again.';
-    }
-
-
 
     if (! empty($errors)) {
-      $error_query = [
+      wp_redirect(add_query_arg([
         'pwr_status'  => 'error',
         'pwr_message' => urlencode(implode('|', $errors)),
         'pwr_fields'  => urlencode(json_encode($_POST))
-      ];
-      wp_redirect(add_query_arg($error_query, wp_get_referer()));
+      ], wp_get_referer()));
       exit;
     }
 
-    // Handle file upload
     if (! function_exists('wp_handle_upload')) {
       require_once(ABSPATH . 'wp-admin/includes/file.php');
     }
+
     $uploaded_file = wp_handle_upload($file, [
       'test_form' => false,
       'mimes'     => [
@@ -280,6 +262,7 @@ class Warranty_Form
         'pdf'  => 'application/pdf'
       ]
     ]);
+
     if (isset($uploaded_file['error'])) {
       wp_redirect(add_query_arg([
         'pwr_status'  => 'error',
@@ -287,14 +270,8 @@ class Warranty_Form
       ], wp_get_referer()));
       exit;
     }
+
     $data['file_url'] = $uploaded_file['url'];
-    $data['warranty_number'] = sanitize_text_field($_POST['warranty_number'] ?? '');
-    if (!empty($options['custom_fields'])) {
-      foreach ($options['custom_fields'] as $field) {
-        $field_name = $field['name'];
-        $data[$field_name] = sanitize_text_field($_POST[$field_name] ?? '');
-      }
-    }
 
     $qr_content = sprintf(
       "Warranty|Number: %s|Name: %s %s",
@@ -302,25 +279,19 @@ class Warranty_Form
       sanitize_text_field($data['first_name']),
       sanitize_text_field($data['last_name'])
     );
+
     $data['qr_code_url'] = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' . urlencode($qr_content);
 
-    error_log('Form data about to be saved: ' . print_r($data, true));
     $result = $wpdb->insert($table_name, $data);
 
     if (! $result) {
-      error_log('DB Error: ' . $wpdb->last_error);
-      error_log('Failed Query: ' . $wpdb->last_query);
-      error_log('Submitted Data: ' . print_r($data, true));
-
       wp_redirect(add_query_arg([
         'pwr_status'  => 'error',
         'pwr_message' => urlencode($error_message)
       ], wp_get_referer()));
-
       exit;
     }
 
-    // Send confirmation email via admin class or a helper (you could refactor this too)
     Warranty_Admin::send_confirmation_email($data);
 
     wp_redirect(add_query_arg([
@@ -329,37 +300,6 @@ class Warranty_Form
     ], wp_get_referer()));
     exit;
   }
-
-  private function verify_recaptcha_v3($token)
-  {
-    $settings = get_option('wr_settings');
-    $secret_key = $settings['recaptcha_secret_key'] ?? '';
-    $url = 'https://www.google.com/recaptcha/api/siteverify';
-
-    $response = wp_remote_post($url, [
-      'body' => [
-        'secret' => $secret_key,
-        'response' => $token,
-        'remoteip' => $_SERVER['REMOTE_ADDR'],
-      ]
-    ]);
-
-    if (is_wp_error($response)) {
-      error_log('reCAPTCHA HTTP error: ' . $response->get_error_message());
-      return false;
-    }
-
-    $data = json_decode(wp_remote_retrieve_body($response), true);
-
-    if (!isset($data['success']) || !$data['success']) {
-      error_log('reCAPTCHA API response error: ' . print_r($data, true));
-      return false;
-    }
-
-    // Optional: adjust score/action as needed
-    return ($data['score'] ?? 0) >= 0.5 && ($data['action'] ?? '') === 'submit';
-  }
 }
 
-// Initialize the form logic.
 new Warranty_Form();

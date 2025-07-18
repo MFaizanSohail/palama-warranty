@@ -15,18 +15,27 @@
       $(this).siblings("input").focus();
     });
 
-    // On input: allow only numbers up to 4 digits
+    // On input: allow only numbers
     $form.find('[name="warranty_number"]').on("input", function () {
       let value = $(this).val().replace(/\D/g, "");
-      if (value.length > 4) value = value.slice(0, 4);
-      $(this).val(value); // Set cleaned value
+      const max = $(this).data("max") || "1000";
+      const totalLength = max.length;
+
+      if (value.length > totalLength) {
+        value = value.slice(0, totalLength);
+      }
+
+      $(this).val(value);
     });
 
-    // On blur: pad to 4 digits with leading zeros
+    // On blur: pad with leading zeros to match max length
     $form.find('[name="warranty_number"]').on("blur", function () {
-      let value = $(this).val();
-      if (value.length > 0 && value.length <= 4) {
-        $(this).val(value.padStart(4, "0"));
+      const max = $(this).data("max") || "1000";
+      const totalLength = max.length;
+      let value = $(this).val().replace(/\D/g, "");
+
+      if (value.length > 0) {
+        $(this).val(value.padStart(totalLength, "0"));
       }
     });
 
@@ -50,16 +59,11 @@
 
         setTimeout(() => {
           $popup.addClass("hidden");
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          );
+          window.history.replaceState({}, document.title, window.location.pathname);
         }, 6000);
       }
     }
 
-    // Delay popup display until after DOM load and scroll
     setTimeout(() => {
       showPopupFromURL();
     }, 300);
@@ -71,17 +75,6 @@
 
     // Client-side form validation
     $form.on("submit", function (e) {
-      e.preventDefault(); 
-      grecaptcha.ready(function () {
-        grecaptcha
-          .execute("<?= esc_js($site_key); ?>", { action: "warranty_form" })
-          .then(function (token) {
-            $("#g-recaptcha-response").val(token); // set token in hidden field
-            $form.off("submit"); // remove handler to avoid recursion
-            $form.submit(); // resubmit now with captcha token
-          });
-      });
-
       let isValid = true;
       const requiredFields = [
         "first_name",
@@ -92,7 +85,7 @@
       ];
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-      // Reset error classes
+      // Reset error states
       $form.find(".wr-error").removeClass("wr-error");
 
       requiredFields.forEach(function (field) {
@@ -128,47 +121,38 @@
         $checkbox.closest(".wr-checkbox-group").addClass("wr-error");
         isValid = false;
       }
+
       const $warranty = $form.find('[name="warranty_number"]');
+      const max = $warranty.data("max") || "1000";
+      const totalLength = max.length;
       const warrantyVal = $warranty.val();
+
       if (
-        !/^\d{4}$/.test(warrantyVal) ||
+        !/^\d+$/.test(warrantyVal) ||
+        warrantyVal.length !== totalLength ||
         parseInt(warrantyVal) < 1 ||
-        parseInt(warrantyVal) > 1000
+        parseInt(warrantyVal) > parseInt(max)
       ) {
         $warranty.addClass("wr-error");
         isValid = false;
 
-        // Show popup error for invalid warranty number
         const $popup = $("#wr-popup");
         const $popupMsg = $("#wr-popup-message");
 
         $popup.removeClass("hidden success error").addClass("error");
         $popupMsg.html(
-          "Warranty number must be a 4-digit number between 0001 and 1000."
+          `Warranty number must be a ${totalLength}-digit number between ${"0".repeat(totalLength - 1)}1 and ${max}.`
         );
 
         setTimeout(() => {
           $popup.addClass("hidden");
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          ); // clean URL
+          window.history.replaceState({}, document.title, window.location.pathname);
         }, 5000);
       }
-    });
 
-    // reCAPTCHA v3 execution
-    if (typeof grecaptcha !== "undefined") {
-      grecaptcha.ready(function () {
-        grecaptcha
-          .execute("<?php echo esc_js($site_key); ?>", {
-            action: "warranty_form",
-          })
-          .then(function (token) {
-            $("#g-recaptcha-response").val(token);
-          });
-      });
-    }
+      if (!isValid) {
+        e.preventDefault();
+      }
+    });
   });
 })(jQuery);
