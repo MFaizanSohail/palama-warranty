@@ -217,7 +217,10 @@ class Warranty_Admin
   {
     $to      = $data['email'];
     $subject = 'Your Warranty Registration';
-    $headers = ['Content-Type: text/html; charset=UTF-8'];
+    $headers = [
+      'Content-Type: text/html; charset=UTF-8',
+      'From: Customer Support customerservice@palamainternational.com'
+    ];
     ob_start();
   ?>
     <!DOCTYPE html>
