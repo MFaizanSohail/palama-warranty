@@ -210,9 +210,6 @@ class Warranty_Form
     }
 
     $file = $_FILES['invoice_file'] ?? null;
-    if (! $file || $file['error'] !== UPLOAD_ERR_OK) {
-      $errors[] = 'Warranty file is required';
-    }
 
     if (empty($_POST['consent'])) {
       $errors[] = 'You must agree to the privacy policy';
@@ -249,29 +246,33 @@ class Warranty_Form
       exit;
     }
 
-    if (! function_exists('wp_handle_upload')) {
-      require_once(ABSPATH . 'wp-admin/includes/file.php');
+    if ($file && $file['error'] === UPLOAD_ERR_OK) {
+      if (! function_exists('wp_handle_upload')) {
+        require_once(ABSPATH . 'wp-admin/includes/file.php');
+      }
+
+      $uploaded_file = wp_handle_upload($file, [
+        'test_form' => false,
+        'mimes'     => [
+          'jpg'  => 'image/jpeg',
+          'jpeg' => 'image/jpeg',
+          'png'  => 'image/png',
+          'pdf'  => 'application/pdf'
+        ]
+      ]);
+
+      if (isset($uploaded_file['error'])) {
+        wp_redirect(add_query_arg([
+          'pwr_status'  => 'error',
+          'pwr_message' => urlencode('File upload error: ' . $uploaded_file['error'])
+        ], wp_get_referer()));
+        exit;
+      }
+
+      $data['file_url'] = $uploaded_file['url'];
+    } else {
+      $data['file_url'] = ''; // or null, depending on your DB schema
     }
-
-    $uploaded_file = wp_handle_upload($file, [
-      'test_form' => false,
-      'mimes'     => [
-        'jpg'  => 'image/jpeg',
-        'jpeg' => 'image/jpeg',
-        'png'  => 'image/png',
-        'pdf'  => 'application/pdf'
-      ]
-    ]);
-
-    if (isset($uploaded_file['error'])) {
-      wp_redirect(add_query_arg([
-        'pwr_status'  => 'error',
-        'pwr_message' => urlencode('File upload error: ' . $uploaded_file['error'])
-      ], wp_get_referer()));
-      exit;
-    }
-
-    $data['file_url'] = $uploaded_file['url'];
 
     $qr_content = sprintf(
       "Warranty|Number: %s|Name: %s %s",
